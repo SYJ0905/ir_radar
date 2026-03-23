@@ -18,9 +18,9 @@ from typing import List
 from PyQt5.QtCore import Qt, QRectF, QPointF
 from PyQt5.QtGui import (
     QPainter, QColor, QPen, QBrush, QRadialGradient,
-    QFont, QPainterPath,
+    QFont, QPainterPath, QIcon, QPixmap,
 )
-from PyQt5.QtWidgets import QWidget
+from PyQt5.QtWidgets import QWidget, QSystemTrayIcon, QMenu, QAction
 
 from .config import RadarConfig
 from .radar_calc import RadarBlip
@@ -28,6 +28,32 @@ from .radar_calc import RadarBlip
 
 def _qcolor(rgba_tuple) -> QColor:
     return QColor(*rgba_tuple)
+
+
+def _create_tray_icon() -> QIcon:
+    """Generate a small radar-style icon for the system tray."""
+    size = 64
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    cx, cy = size / 2, size / 2
+    r = size / 2 - 2
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(10, 10, 10, 220))
+    p.drawEllipse(QPointF(cx, cy), r, r)
+    ring_pen = QPen(QColor(0, 200, 255, 180), 1.5)
+    p.setPen(ring_pen)
+    p.setBrush(Qt.NoBrush)
+    for frac in (0.5, 1.0):
+        p.drawEllipse(QPointF(cx, cy), r * frac, r * frac)
+    p.drawLine(QPointF(cx, cy - r), QPointF(cx, cy + r))
+    p.drawLine(QPointF(cx - r, cy), QPointF(cx + r, cy))
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(0, 200, 255, 255))
+    p.drawEllipse(QPointF(cx, cy), 4, 4)
+    p.end()
+    return QIcon(pix)
 
 
 class RadarWidget(QWidget):
@@ -52,11 +78,12 @@ class RadarWidget(QWidget):
 
     def set_blips(self, blips: List[RadarBlip]):
         self.blips = blips
-        has_nearby = any(b.distance < self.cfg.nearby_distance for b in blips)
-        self._target_opacity = (
-            self.cfg.active_opacity if has_nearby
-            else self.cfg.inactive_opacity
-        )
+        if not self.connected:
+            self._target_opacity = max(self.cfg.inactive_opacity, 0.45)
+        elif any(b.distance < self.cfg.nearby_distance for b in blips):
+            self._target_opacity = self.cfg.active_opacity
+        else:
+            self._target_opacity = self.cfg.inactive_opacity
         self.update()
 
     def animate_opacity(self):
@@ -262,6 +289,39 @@ class OverlayWindow(QWidget):
 
         self.radar = RadarWidget(cfg, self)
         self.radar.move(0, 0)
+
+        # system tray icon
+        self.tray = QSystemTrayIcon(self)
+        self.tray.setIcon(_create_tray_icon())
+        self.tray.setToolTip('iRadar — 360° Radar Overlay')
+
+        tray_menu = QMenu()
+        show_action = QAction('顯示 / 隱藏 雷達', self)
+        show_action.triggered.connect(self._toggle_visible)
+        tray_menu.addAction(show_action)
+        tray_menu.addSeparator()
+        quit_action = QAction('結束 iRadar', self)
+        quit_action.triggered.connect(self._quit)
+        tray_menu.addAction(quit_action)
+
+        self.tray.setContextMenu(tray_menu)
+        self.tray.activated.connect(self._on_tray_activated)
+        self.tray.show()
+
+    def _toggle_visible(self):
+        if self.isVisible():
+            self.hide()
+        else:
+            self.show()
+
+    def _on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.DoubleClick:
+            self._toggle_visible()
+
+    def _quit(self):
+        from PyQt5.QtWidgets import QApplication
+        self.tray.hide()
+        QApplication.instance().quit()
 
     # ------------------------------------------------------------------
     #  Drag to reposition (Alt + left click)
