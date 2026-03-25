@@ -79,8 +79,17 @@ def _assign_lateral(
         else:
             unassigned.append(b)
 
-    # Phase 2: assign new alongside cars from spotter
+    # Phase 2: assign new alongside cars from spotter.
+    # Only the closest unassigned car(s) get the lateral offset;
+    # the spotter signal refers to the nearest car, not all of them.
+    max_new = 2 if (has_left and has_right) else 1
+    assigned_new = 0
+
     for b in unassigned:
+        if assigned_new >= max_new or (not has_left and not has_right):
+            b.rx = 0.0
+            continue
+
         if has_left and not has_right:
             b.rx = -cfg.lateral_estimate
         elif has_right and not has_left:
@@ -100,11 +109,10 @@ def _assign_lateral(
                 b.rx = -cfg.lateral_estimate
             else:
                 b.rx = -cfg.lateral_estimate
-        else:
-            b.rx = 0.0
 
         if abs(b.rx) > 0.1:
             state.car_sides[b.car_idx] = b.rx
+            assigned_new += 1
 
     # Phase 3: non-alongside cars — decay lateral offset toward zero
     for b in blips:
