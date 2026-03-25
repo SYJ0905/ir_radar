@@ -112,6 +112,9 @@ class RadarWidget(QWidget):
         self._draw_rings(p, cx, cy, radius)
         self._draw_cars(p, cx, cy, radius)
         self._draw_self_car(p, cx, cy)
+
+        # status text always at full opacity so it's readable
+        p.setOpacity(1.0)
         self._draw_status(p, cx, cy, radius)
 
         p.end()
@@ -210,25 +213,35 @@ class RadarWidget(QWidget):
             p.drawRoundedRect(rect, 2, 2)
 
     def _draw_status(self, p: QPainter, _cx, cy, radius):
-        """Draw recording progress or connection status."""
-        font = QFont('Arial', 9)
+        """Draw recording progress or connection status (always full opacity)."""
+        font = QFont('Arial', 11)
+        font.setBold(True)
         p.setFont(font)
 
         if not self.connected:
-            p.setPen(QColor(200, 200, 200, 180))
+            p.setPen(QColor(220, 220, 220, 240))
             p.drawText(
-                QRectF(0, cy + radius * 0.55, self.cfg.radar_size, 20),
+                QRectF(0, cy + radius * 0.4, self.cfg.radar_size, 24),
                 Qt.AlignCenter, 'Waiting for iRacing...'
             )
         elif self.recording_progress >= 0 and not self.spline_ready:
             pct = int(self.recording_progress * 100)
-            p.setPen(QColor(255, 200, 0, 220))
+            p.setPen(QColor(255, 200, 0, 255))
             p.drawText(
-                QRectF(0, cy + radius * 0.55, self.cfg.radar_size, 20),
+                QRectF(0, cy + radius * 0.4, self.cfg.radar_size, 24),
                 Qt.AlignCenter, f'Recording track: {pct}%'
             )
+            font2 = QFont('Arial', 8)
+            p.setFont(font2)
+            p.setPen(QColor(200, 200, 200, 200))
+            p.drawText(
+                QRectF(0, cy + radius * 0.58, self.cfg.radar_size, 18),
+                Qt.AlignCenter, 'Drive one full lap to calibrate'
+            )
         elif self.track_name:
-            p.setPen(QColor(160, 160, 160, 100))
+            font3 = QFont('Arial', 8)
+            p.setFont(font3)
+            p.setPen(QColor(160, 160, 160, 120))
             p.drawText(
                 QRectF(0, cy + radius * 0.70, self.cfg.radar_size, 16),
                 Qt.AlignCenter, self.track_name

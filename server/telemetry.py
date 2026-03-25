@@ -108,6 +108,10 @@ class TelemetryReader:
 
         self._ir.freeze_var_buffer_latest()
 
+        # re-parse session info if track name is still unknown
+        if not self._track_name:
+            self._parse_session_info()
+
         snap = TelemetrySnapshot(connected=True)
 
         # session

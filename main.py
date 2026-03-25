@@ -61,6 +61,7 @@ class RadarApp:
         self.recorder: SplineRecorder | None = None
         self._last_lap_pct: float = -1.0
         self._recording_lap: int = -1
+        self._current_track: str = ''
 
         self._logged_connect = False
         self._diag_counter = 0
@@ -122,10 +123,24 @@ class RadarApp:
         if snap is None or not snap.connected:
             self.window.radar.connected = False
             self.window.radar.set_blips([])
+            if self._logged_connect:
+                log.info('Disconnected from iRacing')
+                self._logged_connect = False
             return
 
         self.window.radar.connected = True
         self.window.radar.track_name = snap.track_name
+
+        # detect track change (e.g., user left one session and joined another)
+        track_key = f'{snap.track_name}_{snap.track_config}'
+        if snap.track_name and track_key != self._current_track:
+            if self._current_track:
+                log.info('Track changed: %s -> %s', self._current_track, track_key)
+                self.spline = None
+                self.recorder = None
+                self._recording_lap = -1
+            self._current_track = track_key
+            self._logged_connect = False
 
         # log connection once
         if not self._logged_connect:
