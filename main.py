@@ -156,16 +156,25 @@ class RadarApp:
         # periodic diagnostics (every 5 seconds)
         self._diag_counter += 1
         if self._diag_counter % (self.cfg.update_fps * 5) == 0:
-            on_track = sum(1 for c in snap.cars
-                           if c.on_track and not c.on_pit_road
-                           and c.car_idx != snap.player_car_idx)
+            on_track_cars = [(c.car_idx, c.lap_dist_pct, c.lap)
+                             for c in snap.cars
+                             if c.on_track and not c.on_pit_road
+                             and c.car_idx != snap.player_car_idx]
+            blips = self.window.radar.blips
             log.info('DIAG lap=%d pct=%.4f lat=%.6f lon=%.6f yaw=%.3f '
                      'cars_on_track=%d spline=%s blips=%d',
                      snap.player_lap, snap.player_lap_dist_pct,
                      snap.player_lat, snap.player_lon, snap.player_yaw,
-                     on_track,
-                     'ready' if self.spline else 'none',
-                     len(self.window.radar.blips))
+                     len(on_track_cars),
+                     'ready(%.0fm)' % self.spline.spatial_extent() if self.spline else 'none',
+                     len(blips))
+            if on_track_cars:
+                for idx, pct, lap in on_track_cars[:5]:
+                    log.info('  car[%d] pct=%.4f lap=%d', idx, pct, lap)
+            if blips:
+                for b in blips[:5]:
+                    log.info('  blip[%d] rx=%.1f ry=%.1f dist=%.1f lapped=%s',
+                             b.car_idx, b.rx, b.ry, b.distance, b.is_lapped)
 
         # ensure we have a track spline
         if self.spline is None:
@@ -192,13 +201,25 @@ class RadarApp:
 
     def _handle_spline_acquisition(self, snap):
         from server.track_spline import spline_path
+        import os as _os
         cached = load_spline(self.cfg, snap.track_name, snap.track_config)
         if cached is not None:
-            self.spline = cached
-            log.info('Loaded track spline: %s %s (%d points)',
-                     snap.track_name, snap.track_config, len(cached.pcts))
-            print(f'  Loaded track spline: {snap.track_name} {snap.track_config}')
-            return
+            extent = cached.spatial_extent()
+            log.info('Loaded cached spline: %s %s — %d points, extent=%.1fm',
+                     snap.track_name, snap.track_config,
+                     len(cached.pcts), extent)
+            if cached.is_valid():
+                self.spline = cached
+                print(f'  Loaded track spline: {snap.track_name} {snap.track_config}')
+                return
+            else:
+                bad_path = spline_path(self.cfg, snap.track_name, snap.track_config)
+                log.warning('Cached spline INVALID (extent=%.1fm) — deleting %s',
+                            extent, bad_path)
+                try:
+                    _os.remove(bad_path)
+                except OSError:
+                    pass
 
         if self.recorder is None:
             sp = spline_path(self.cfg, snap.track_name, snap.track_config)
@@ -220,6 +241,12 @@ class RadarApp:
             snap.player_lon,
         )
 
+        # log recording progress periodically
+        if self.recorder.sample_count in (1, 10, 50):
+            log.info('Recording sample #%d: pct=%.4f lat=%.6f lon=%.6f',
+                     self.recorder.sample_count, snap.player_lap_dist_pct,
+                     snap.player_lat, snap.player_lon)
+
         # detect lap crossing (S/F line)
         if snap.player_lap > self._recording_lap and self._recording_lap >= 0:
             self.recorder.mark_lap_complete()
@@ -237,8 +264,10 @@ class RadarApp:
                 self.cfg, snap.track_name, snap.track_config,
             )
             if self.spline:
-                log.info('Track spline saved! %d points', self.recorder.sample_count)
-                print(f'  Track spline saved! ({self.recorder.sample_count} points)')
+                ext = self.spline.spatial_extent()
+                log.info('Track spline saved! %d points, extent=%.1fm, valid=%s',
+                         self.recorder.sample_count, ext, self.spline.is_valid())
+                print(f'  Track spline saved! ({self.recorder.sample_count} points, {ext:.0f}m extent)')
             else:
                 log.warning('Failed to build spline, restarting recording...')
                 print('  WARNING: failed to build spline, restarting recording...')

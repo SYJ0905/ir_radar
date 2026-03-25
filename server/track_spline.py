@@ -82,6 +82,18 @@ class TrackSpline:
         y = self.ys[i0] + t * (self.ys[i1] - self.ys[i0])
         return float(x), float(y)
 
+    def spatial_extent(self) -> float:
+        """Return the diagonal extent of the spline in metres."""
+        if len(self.xs) < 2:
+            return 0.0
+        dx = float(self.xs.max() - self.xs.min())
+        dy = float(self.ys.max() - self.ys.min())
+        return math.sqrt(dx * dx + dy * dy)
+
+    def is_valid(self, min_extent: float = 100.0) -> bool:
+        """Check if the spline covers a reasonable area (not all zeros)."""
+        return len(self.pcts) >= 50 and self.spatial_extent() > min_extent
+
     # -----------------------------------------------------------------------
     #  Heading at a point (tangent direction)
     # -----------------------------------------------------------------------
