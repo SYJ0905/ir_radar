@@ -6,6 +6,7 @@ Features:
   - Circular radar with self-car in centre
   - Other cars rendered as rounded rectangles with colour coding
   - Dynamic opacity (方案 C): dim when alone, bright when cars nearby
+  - Smooth blip movement via per-frame lerp
   - Draggable via Alt+click (to reposition on screen)
 """
 
@@ -13,7 +14,7 @@ from __future__ import annotations
 
 import math
 import sys
-from typing import List
+from typing import Dict, List, Tuple
 
 from PyQt5.QtCore import Qt, QRectF, QPointF
 from PyQt5.QtGui import (
@@ -65,10 +66,13 @@ class RadarWidget(QWidget):
         self.blips: List[RadarBlip] = []
         self.current_opacity: float = cfg.inactive_opacity
         self._target_opacity: float = cfg.inactive_opacity
-        self.recording_progress: float = -1.0   # -1 = not recording
+        self.recording_progress: float = -1.0
         self.spline_ready: bool = False
         self.connected: bool = False
         self.track_name: str = ''
+
+        # smoothing state: car_idx → (display_rx, display_ry)
+        self._smooth: Dict[int, Tuple[float, float]] = {}
 
         self.setFixedSize(cfg.radar_size, cfg.radar_size)
 
@@ -77,6 +81,7 @@ class RadarWidget(QWidget):
     # ------------------------------------------------------------------
 
     def set_blips(self, blips: List[RadarBlip]):
+        self._apply_smoothing(blips)
         self.blips = blips
         if not self.connected:
             self._target_opacity = max(self.cfg.inactive_opacity, 0.45)
@@ -85,6 +90,24 @@ class RadarWidget(QWidget):
         else:
             self._target_opacity = self.cfg.inactive_opacity
         self.update()
+
+    def _apply_smoothing(self, blips: List[RadarBlip]):
+        """Lerp blip positions towards their targets for smooth movement."""
+        f = self.cfg.smooth_factor
+        active_ids = set()
+
+        for b in blips:
+            active_ids.add(b.car_idx)
+            if b.car_idx in self._smooth:
+                prev_rx, prev_ry = self._smooth[b.car_idx]
+                b.rx = prev_rx + (b.rx - prev_rx) * f
+                b.ry = prev_ry + (b.ry - prev_ry) * f
+            self._smooth[b.car_idx] = (b.rx, b.ry)
+
+        # purge entries for cars no longer visible
+        stale = [k for k in self._smooth if k not in active_ids]
+        for k in stale:
+            del self._smooth[k]
 
     def animate_opacity(self):
         diff = self._target_opacity - self.current_opacity
@@ -113,7 +136,6 @@ class RadarWidget(QWidget):
         self._draw_cars(p, cx, cy, radius)
         self._draw_self_car(p, cx, cy)
 
-        # status text always at full opacity so it's readable
         p.setOpacity(1.0)
         self._draw_status(p, cx, cy, radius)
 
@@ -134,12 +156,10 @@ class RadarWidget(QWidget):
         p.setPen(pen)
         p.setBrush(Qt.NoBrush)
 
-        # concentric rings at 25%, 50%, 75%, 100% range
         for frac in (0.25, 0.5, 0.75, 1.0):
             r = radius * frac
             p.drawEllipse(QPointF(cx, cy), r, r)
 
-        # crosshair lines
         pen.setStyle(Qt.DotLine)
         p.setPen(pen)
         p.drawLine(QPointF(cx, cy - radius), QPointF(cx, cy + radius))
@@ -153,13 +173,11 @@ class RadarWidget(QWidget):
         h = cfg.self_car_length * scale * vs
         col = _qcolor(cfg.self_colour)
 
-        # car body
-        p.setPen(QPen(col, 1.5))
-        p.setBrush(QColor(col.red(), col.green(), col.blue(), 60))
+        p.setPen(QPen(col, 2.0))
+        p.setBrush(QColor(col.red(), col.green(), col.blue(), 90))
         rect = QRectF(cx - w / 2, cy - h / 2, w, h)
-        p.drawRoundedRect(rect, 2, 2)
+        p.drawRoundedRect(rect, 3, 3)
 
-        # direction indicator (small triangle pointing up)
         tri_size = max(w * 0.4, 3)
         path = QPainterPath()
         path.moveTo(cx, cy - h / 2 - 2)
@@ -197,20 +215,21 @@ class RadarWidget(QWidget):
                     int(near.red() + (far.red() - near.red()) * t),
                     int(near.green() + (far.green() - near.green()) * t),
                     int(near.blue() + (far.blue() - near.blue()) * t),
-                    int(near.alpha() + (far.alpha() - near.alpha()) * t),
+                    255,
                 )
 
             vs = cfg.car_visual_scale
             w = cfg.other_car_width * scale * vs
             h = cfg.other_car_length * scale * vs
-            w = max(w, 8)
-            h = max(h, 14)
+            w = max(w, 10)
+            h = max(h, 16)
 
-            p.setPen(QPen(col, 1.2))
-            fill = QColor(col.red(), col.green(), col.blue(), int(col.alpha() * 0.5))
+            # solid outline + strong fill for visibility
+            p.setPen(QPen(col, 2.0))
+            fill = QColor(col.red(), col.green(), col.blue(), int(col.alpha() * 0.85))
             p.setBrush(fill)
             rect = QRectF(px - w / 2, py - h / 2, w, h)
-            p.drawRoundedRect(rect, 2, 2)
+            p.drawRoundedRect(rect, 3, 3)
 
     def _draw_status(self, p: QPainter, _cx, cy, radius):
         """Draw recording progress or connection status (always full opacity)."""
@@ -263,16 +282,14 @@ class OverlayWindow(QWidget):
         self.cfg = cfg
         self._drag_pos = None
 
-        # window flags
         flags = (
             Qt.FramelessWindowHint
             | Qt.WindowStaysOnTopHint
-            | Qt.Tool  # hides from taskbar
+            | Qt.Tool
         )
         self.setWindowFlags(flags)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
 
-        # on Windows: make click-through unless Alt is held
         if sys.platform == 'win32':
             try:
                 import ctypes
@@ -290,7 +307,6 @@ class OverlayWindow(QWidget):
 
         self.setFixedSize(cfg.radar_size, cfg.radar_size)
 
-        # resolve position from preset using screen geometry
         from PyQt5.QtWidgets import QApplication
         screen = QApplication.primaryScreen()
         if screen:
@@ -303,7 +319,6 @@ class OverlayWindow(QWidget):
         self.radar = RadarWidget(cfg, self)
         self.radar.move(0, 0)
 
-        # system tray icon
         self.tray = QSystemTrayIcon(self)
         self.tray.setIcon(_create_tray_icon())
         self.tray.setToolTip('iRadar — 360° Radar Overlay')

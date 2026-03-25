@@ -58,6 +58,9 @@ class RadarConfig:
     other_car_width: float = 1.9
     car_visual_scale: float = 2.2    # multiplier for drawing only (not collision)
 
+    # --- Smoothing ---
+    smooth_factor: float = 0.18     # lerp factor per frame (0=frozen, 1=instant)
+
     # --- Update ---
     update_fps: int = 30
 
@@ -83,7 +86,7 @@ class RadarConfig:
             return
         half = self.radar_size // 2
         presets = {
-            'center-top':  (screen_width // 2 - half, int(screen_height * 0.12)),
+            'center-top':  (screen_width // 2 - half, int(screen_height * 0.28)),
             'center':      (screen_width // 2 - half, screen_height // 2 - half),
             'top-left':    (20, 20),
             'top-right':   (screen_width - self.radar_size - 20, 20),
