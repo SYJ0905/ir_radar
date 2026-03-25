@@ -127,10 +127,12 @@ class RadarApp:
                              and c.car_idx != snap.player_car_idx]
             blips = self.window.radar.blips
             log.info('DIAG lap=%d pct=%.4f track_len=%.0fm '
-                     'cars_on_track=%d blips=%d',
+                     'CLR=%d cars_on_track=%d blips=%d',
                      snap.player_lap, snap.player_lap_dist_pct,
-                     snap.track_length,
+                     snap.track_length, snap.car_left_right,
                      len(on_track_cars), len(blips))
+            for ci, cpct, clap in on_track_cars[:5]:
+                log.info('  car[%d] pct=%.4f lap=%d', ci, cpct, clap)
             for b in blips[:5]:
                 log.info('  blip[%d] rx=%.1f ry=%.1f dist=%.1f lapped=%s',
                          b.car_idx, b.rx, b.ry, b.distance, b.is_lapped)

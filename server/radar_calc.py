@@ -121,7 +121,10 @@ def compute_radar(
         if abs_dist > cfg.range_metres:
             continue
 
-        is_lapped = car.lap != snap.player_lap
+        # Only mark as "lapped" when the lap difference is >= 2.
+        # A 1-lap diff is common near the S/F line or in practice where
+        # AI starts on lap 0 while the player is on lap 1.
+        is_lapped = abs(car.lap - snap.player_lap) >= 2
 
         blips.append(RadarBlip(
             car_idx=car.car_idx,
