@@ -21,7 +21,7 @@ from PyQt5.QtWidgets import QApplication
 
 from server.config import RadarConfig
 from server.overlay import OverlayWindow
-from server.radar_calc import compute_radar
+from server.radar_calc import compute_radar, RadarState
 
 def _app_dir() -> str:
     if getattr(sys, 'frozen', False):
@@ -53,6 +53,7 @@ class RadarApp:
 
         self._logged_connect = False
         self._diag_counter = 0
+        self._radar_state = RadarState()
 
         self.app = QApplication(sys.argv)
         self.app.setQuitOnLastWindowClosed(False)
@@ -137,7 +138,7 @@ class RadarApp:
                 log.info('  blip[%d] rx=%.1f ry=%.1f dist=%.1f lapped=%s',
                          b.car_idx, b.rx, b.ry, b.distance, b.is_lapped)
 
-        blips = compute_radar(snap, self.cfg)
+        blips = compute_radar(snap, self.cfg, self._radar_state)
         self.window.radar.set_blips(blips)
 
 

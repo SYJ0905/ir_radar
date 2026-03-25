@@ -2,15 +2,15 @@
 Radar calculation engine — LapDistPct-based approach.
 
 Uses CarIdxLapDistPct + TrackLength for longitudinal distance,
-and CarLeftRight spotter data for lateral positioning.
-No GPS/spline needed — works immediately on any track.
+and CarLeftRight spotter data for lateral positioning with
+persistent per-car side tracking to prevent lateral flips.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import List
+from typing import Dict, List, Optional
 
 from .telemetry import (
     TelemetrySnapshot,
@@ -18,6 +18,9 @@ from .telemetry import (
     LR_2_CARS_LEFT, LR_2_CARS_RIGHT,
 )
 from .config import RadarConfig
+
+ALONGSIDE_THRESHOLD = 12.0   # metres — spotter detection window
+LATERAL_DECAY_DIST = 20.0    # metres — fade lateral offset to 0 over this distance
 
 
 @dataclass
@@ -28,6 +31,97 @@ class RadarBlip:
     ry: float               # >0 = ahead of player (metres)
     distance: float          # absolute distance in metres
     is_lapped: bool = False
+
+
+class RadarState:
+    """Persistent state across frames for per-car lateral tracking.
+
+    Prevents the lateral-flip problem by remembering which side
+    each car was assigned to, rather than re-computing from the
+    global CarLeftRight spotter every frame.
+    """
+
+    def __init__(self):
+        self.car_sides: Dict[int, float] = {}
+
+
+def _assign_lateral(
+    blips: List[RadarBlip],
+    snap: TelemetrySnapshot,
+    cfg: RadarConfig,
+    state: RadarState,
+) -> None:
+    """Assign rx (lateral) positions using persistent per-car tracking.
+
+    Phase 1 — Alongside cars that already have a persisted side keep it.
+    Phase 2 — New alongside cars get assigned based on the spotter.
+    Phase 3 — Cars outside the alongside zone have their offset decayed
+              smoothly toward zero so the transition looks natural.
+    """
+    has_left = snap.car_left_right in (
+        LR_CAR_LEFT, LR_CAR_LEFT_RIGHT, LR_2_CARS_LEFT,
+    )
+    has_right = snap.car_left_right in (
+        LR_CAR_RIGHT, LR_CAR_LEFT_RIGHT, LR_2_CARS_RIGHT,
+    )
+
+    alongside = sorted(
+        [b for b in blips if abs(b.ry) < ALONGSIDE_THRESHOLD],
+        key=lambda b: abs(b.ry),
+    )
+    alongside_ids = {b.car_idx for b in alongside}
+
+    # Phase 1: keep existing assignments
+    unassigned: List[RadarBlip] = []
+    for b in alongside:
+        if b.car_idx in state.car_sides:
+            b.rx = state.car_sides[b.car_idx]
+        else:
+            unassigned.append(b)
+
+    # Phase 2: assign new alongside cars from spotter
+    for b in unassigned:
+        if has_left and not has_right:
+            b.rx = -cfg.lateral_estimate
+        elif has_right and not has_left:
+            b.rx = cfg.lateral_estimate
+        elif has_left and has_right:
+            left_taken = any(
+                state.car_sides.get(c, 0) < -1.0
+                for c in alongside_ids if c != b.car_idx
+            )
+            right_taken = any(
+                state.car_sides.get(c, 0) > 1.0
+                for c in alongside_ids if c != b.car_idx
+            )
+            if left_taken and not right_taken:
+                b.rx = cfg.lateral_estimate
+            elif right_taken and not left_taken:
+                b.rx = -cfg.lateral_estimate
+            else:
+                b.rx = -cfg.lateral_estimate
+        else:
+            b.rx = 0.0
+
+        if abs(b.rx) > 0.1:
+            state.car_sides[b.car_idx] = b.rx
+
+    # Phase 3: non-alongside cars — decay lateral offset toward zero
+    for b in blips:
+        if b.car_idx in alongside_ids:
+            continue
+        prev = state.car_sides.get(b.car_idx)
+        if prev is not None:
+            overshoot = max(0.0, abs(b.ry) - ALONGSIDE_THRESHOLD)
+            decay = max(0.0, 1.0 - overshoot / LATERAL_DECAY_DIST)
+            b.rx = prev * decay
+            if decay <= 0.0:
+                del state.car_sides[b.car_idx]
+
+    # Purge cars that left the radar entirely
+    active = {b.car_idx for b in blips}
+    for k in [k for k in state.car_sides if k not in active]:
+        del state.car_sides[k]
 
 
 def _resolve_overlaps(blips: List[RadarBlip], cfg: RadarConfig) -> List[RadarBlip]:
@@ -84,12 +178,14 @@ def _resolve_overlaps(blips: List[RadarBlip], cfg: RadarConfig) -> List[RadarBli
 def compute_radar(
     snap: TelemetrySnapshot,
     cfg: RadarConfig,
+    state: Optional[RadarState] = None,
 ) -> List[RadarBlip]:
     """
     Compute radar blips using LapDistPct + TrackLength.
 
     Longitudinal distance = pct_diff * track_length (metres).
-    Lateral position = estimated from CarLeftRight spotter for nearby cars.
+    Lateral position = estimated from CarLeftRight spotter with
+    persistent per-car side tracking (requires a RadarState).
     """
     if not snap.connected or not snap.cars:
         return []
@@ -121,9 +217,6 @@ def compute_radar(
         if abs_dist > cfg.range_metres:
             continue
 
-        # Only mark as "lapped" when the lap difference is >= 2.
-        # A 1-lap diff is common near the S/F line or in practice where
-        # AI starts on lap 0 while the player is on lap 1.
         is_lapped = abs(car.lap - snap.player_lap) >= 2
 
         blips.append(RadarBlip(
@@ -134,60 +227,9 @@ def compute_radar(
             is_lapped=is_lapped,
         ))
 
-    # --- Lateral assignment using CarLeftRight spotter ---
-    # The spotter detects cars roughly alongside the player (~10m window).
-    # Assign the closest alongside cars to left/right based on spotter state.
-    alongside_threshold = 12.0  # metres
-    alongside = sorted(
-        [b for b in blips if abs(b.ry) < alongside_threshold],
-        key=lambda b: abs(b.ry),
-    )
+    if state is not None:
+        _assign_lateral(blips, snap, cfg, state)
 
-    has_left = snap.car_left_right in (
-        LR_CAR_LEFT, LR_CAR_LEFT_RIGHT, LR_2_CARS_LEFT,
-    )
-    has_right = snap.car_left_right in (
-        LR_CAR_RIGHT, LR_CAR_LEFT_RIGHT, LR_2_CARS_RIGHT,
-    )
-    two_left = snap.car_left_right == LR_2_CARS_LEFT
-    two_right = snap.car_left_right == LR_2_CARS_RIGHT
-
-    assigned = set()
-
-    if has_left and has_right and len(alongside) >= 2:
-        alongside[0].rx = -cfg.lateral_estimate
-        assigned.add(alongside[0].car_idx)
-        alongside[1].rx = cfg.lateral_estimate
-        assigned.add(alongside[1].car_idx)
-        if two_left and len(alongside) >= 3:
-            alongside[2].rx = -cfg.lateral_estimate * 1.8
-            assigned.add(alongside[2].car_idx)
-        if two_right and len(alongside) >= 3:
-            idx = 3 if alongside[2].car_idx in assigned else 2
-            if idx < len(alongside):
-                alongside[idx].rx = cfg.lateral_estimate * 1.8
-                assigned.add(alongside[idx].car_idx)
-    elif has_left:
-        if alongside:
-            alongside[0].rx = -cfg.lateral_estimate
-            assigned.add(alongside[0].car_idx)
-        if two_left and len(alongside) >= 2:
-            alongside[1].rx = -cfg.lateral_estimate * 1.8
-            assigned.add(alongside[1].car_idx)
-    elif has_right:
-        if alongside:
-            alongside[0].rx = cfg.lateral_estimate
-            assigned.add(alongside[0].car_idx)
-        if two_right and len(alongside) >= 2:
-            alongside[1].rx = cfg.lateral_estimate * 1.8
-            assigned.add(alongside[1].car_idx)
-
-    # Unassigned alongside cars: spread slightly for visibility
-    for b in alongside:
-        if b.car_idx not in assigned:
-            b.rx = ((b.car_idx * 7) % 5 - 2) * 0.4
-
-    # Recalculate distance including lateral component
     for b in blips:
         b.distance = math.sqrt(b.rx * b.rx + b.ry * b.ry)
 

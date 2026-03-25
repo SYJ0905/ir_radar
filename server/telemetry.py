@@ -172,8 +172,12 @@ class TelemetryReader:
             weekend = self._ir['WeekendInfo']
             if weekend:
                 track_len_str = weekend.get('TrackLength', '0 km')
-                km_str = track_len_str.replace(' km', '').replace(' mi', '').strip()
-                self._track_length = float(km_str) * 1000.0
+                if ' mi' in track_len_str:
+                    val = float(track_len_str.replace(' mi', '').strip())
+                    self._track_length = val * 1609.34
+                else:
+                    val = float(track_len_str.replace(' km', '').strip())
+                    self._track_length = val * 1000.0
                 self._track_name = weekend.get('TrackDisplayName', '') or ''
                 self._track_config = weekend.get('TrackConfigName', '') or ''
         except Exception:
