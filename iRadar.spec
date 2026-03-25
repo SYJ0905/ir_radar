@@ -17,7 +17,7 @@ a = Analysis(
         'server.config',
         'server.telemetry',
         'server.mock_data',
-        'server.track_spline',
+
         'server.radar_calc',
         'server.overlay',
     ],

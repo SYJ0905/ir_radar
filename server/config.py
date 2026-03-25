@@ -58,16 +58,10 @@ class RadarConfig:
     other_car_width: float = 1.9
     car_visual_scale: float = 2.2    # multiplier for drawing only (not collision)
 
-    # --- Track spline ---
-    spline_sample_interval: float = 0.001  # LapDistPct step for recording (0.1 %)
-    spline_dir: str = ''
-
     # --- Update ---
     update_fps: int = 30
 
     def __post_init__(self):
-        if not self.spline_dir:
-            self.spline_dir = os.path.join(_app_dir(), 'track_data')
         # convert plain lists back to tuples after JSON deserialisation
         for attr in ('bg_colour', 'ring_colour', 'self_colour',
                      'car_colour_far', 'car_colour_near', 'car_colour_lapped'):
