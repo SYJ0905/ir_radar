@@ -124,53 +124,34 @@ def _assign_lateral(
         del state.car_sides[k]
 
 
-def _resolve_overlaps(blips: List[RadarBlip], cfg: RadarConfig) -> List[RadarBlip]:
-    vs = cfg.car_visual_scale
-    car_w = cfg.other_car_width * vs
-    car_h = cfg.other_car_length * vs
-    self_w = cfg.self_car_width * vs
-    self_h = cfg.self_car_length * vs
-    min_gap = 0.3
+def _resolve_overlaps(blips: List[RadarBlip], _cfg: RadarConfig) -> List[RadarBlip]:
+    """Separate overlapping car blips for visual clarity.
 
-    effective_w = car_w + min_gap
-    effective_h = car_h + min_gap
+    Self-car collision is intentionally NOT resolved — a car directly
+    ahead or behind SHOULD overlap with the self-car icon; that overlap
+    is informative, not a visual bug.
 
-    for _ in range(3):
-        for b in blips:
-            ox = (effective_w + self_w + min_gap) / 2.0 - abs(b.rx)
-            oy = (effective_h + self_h + min_gap) / 2.0 - abs(b.ry)
-            if ox > 0 and oy > 0:
-                if ox < oy:
-                    sign = 1.0 if b.rx >= 0 else -1.0
-                    b.rx += sign * ox
-                else:
-                    sign = 1.0 if b.ry >= 0 else -1.0
-                    b.ry += sign * oy
+    Inter-car overlaps are resolved along the ry axis only, so cars
+    that are following each other stay on the correct lateral line
+    instead of being pushed left/right.
+    """
+    min_sep_y = 3.0
+    min_sep_x = 2.5
 
+    for _ in range(2):
         for i in range(len(blips)):
             for j in range(i + 1, len(blips)):
                 a, b = blips[i], blips[j]
                 dx = abs(a.rx - b.rx)
                 dy = abs(a.ry - b.ry)
-                ox = effective_w - dx
-                oy = effective_h - dy
-                if ox > 0 and oy > 0:
-                    if ox < oy:
-                        half = ox / 2.0
-                        if a.rx <= b.rx:
-                            a.rx -= half
-                            b.rx += half
-                        else:
-                            a.rx += half
-                            b.rx -= half
+                if dx < min_sep_x and dy < min_sep_y:
+                    push = (min_sep_y - dy) / 2.0
+                    if a.ry <= b.ry:
+                        a.ry -= push
+                        b.ry += push
                     else:
-                        half = oy / 2.0
-                        if a.ry <= b.ry:
-                            a.ry -= half
-                            b.ry += half
-                        else:
-                            a.ry += half
-                            b.ry -= half
+                        a.ry += push
+                        b.ry -= push
 
     return blips
 

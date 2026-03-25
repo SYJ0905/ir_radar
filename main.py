@@ -119,19 +119,21 @@ class RadarApp:
                      snap.player_car_idx, on_track)
             self._logged_connect = True
 
-        # periodic diagnostics
+        # periodic diagnostics (every 2 seconds)
         self._diag_counter += 1
-        if self._diag_counter % (self.cfg.update_fps * 5) == 0:
+        if self._diag_counter % (self.cfg.update_fps * 2) == 0:
             on_track_cars = [(c.car_idx, c.lap_dist_pct, c.lap)
                              for c in snap.cars
                              if c.on_track and not c.on_pit_road
                              and c.car_idx != snap.player_car_idx]
             blips = self.window.radar.blips
+            sides = self._radar_state.car_sides
             log.info('DIAG lap=%d pct=%.4f track_len=%.0fm '
-                     'CLR=%d cars_on_track=%d blips=%d',
+                     'CLR=%d cars_on_track=%d blips=%d sides=%s',
                      snap.player_lap, snap.player_lap_dist_pct,
                      snap.track_length, snap.car_left_right,
-                     len(on_track_cars), len(blips))
+                     len(on_track_cars), len(blips),
+                     {k: round(v, 1) for k, v in sides.items()} if sides else '{}')
             for ci, cpct, clap in on_track_cars[:5]:
                 log.info('  car[%d] pct=%.4f lap=%d', ci, cpct, clap)
             for b in blips[:5]:
