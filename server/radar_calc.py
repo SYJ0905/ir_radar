@@ -129,9 +129,11 @@ def compute_radar(
     if not snap.connected or not snap.cars:
         return []
 
-    # player world position from spline
+    # player world position and heading from spline
+    # (must use spline heading, not iRacing Yaw, because the spline
+    #  is in GPS coordinates while Yaw is in iRacing's game world)
     player_x, player_y = spline.lookup(snap.player_lap_dist_pct)
-    player_yaw = snap.player_yaw
+    player_yaw = spline.heading_at(snap.player_lap_dist_pct)
 
     # determine which cars are on the player's left / right via spotter
     left_side = snap.car_left_right in (LR_CAR_LEFT, LR_CAR_LEFT_RIGHT, LR_2_CARS_LEFT)
@@ -154,9 +156,10 @@ def compute_radar(
         dx = cx - player_x
         dy = cy - player_y
 
-        # rotate into player's reference frame (yaw = 0 means facing +Y)
-        sin_y = math.sin(-player_yaw)
-        cos_y = math.cos(-player_yaw)
+        # rotate into player's reference frame
+        # rx > 0 = right of player, ry > 0 = ahead of player
+        sin_y = math.sin(player_yaw)
+        cos_y = math.cos(player_yaw)
         rx = dx * cos_y - dy * sin_y
         ry = dx * sin_y + dy * cos_y
 
