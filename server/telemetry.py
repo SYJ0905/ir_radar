@@ -149,8 +149,9 @@ class TelemetryReader:
             if i < len(surfaces):
                 # irsdk_TrkLoc: -1=NotInWorld, 0=OffTrack, 1=InPitStall,
                 # 2=AproachingPits, 3=OnTrack
-                # Only show cars that are racing (on track surface or went off)
-                on_track = surfaces[i] in (0, 3)
+                # Strictly on racing surface only — avoids phantom cars
+                # from empty slots (surface=0) or pit lane (surface=1,2)
+                on_track = surfaces[i] == 3
 
             car = CarState(
                 car_idx=i,
