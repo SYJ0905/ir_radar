@@ -143,7 +143,10 @@ class TelemetryReader:
         for i in range(num_cars):
             on_track = False
             if i < len(surfaces):
-                on_track = surfaces[i] == 3  # irsdk_OnTrack
+                # irsdk_TrkLoc: -1=NotInWorld, 0=OffTrack, 1=InPitStall,
+                # 2=AproachingPits, 3=OnTrack
+                # Accept anything >= 0 (car exists in world)
+                on_track = surfaces[i] >= 0
 
             car = CarState(
                 car_idx=i,
@@ -164,10 +167,10 @@ class TelemetryReader:
             weekend = self._ir['WeekendInfo']
             if weekend:
                 track_len_str = weekend.get('TrackLength', '0 km')
-                self._track_length = float(
-                    track_len_str.replace(' km', '').replace(' mi', '')
-                ) * 1000.0  # convert to metres
-                self._track_name = weekend.get('TrackDisplayName', '')
-                self._track_config = weekend.get('TrackConfigName', '')
+                km_str = track_len_str.replace(' km', '').replace(' mi', '').strip()
+                self._track_length = float(km_str) * 1000.0
+                self._track_name = weekend.get('TrackDisplayName', '') or ''
+                self._track_config = weekend.get('TrackConfigName', '') or ''
         except Exception:
-            pass
+            self._track_name = self._track_name or 'unknown'
+            self._track_config = self._track_config or ''

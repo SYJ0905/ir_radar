@@ -27,7 +27,12 @@ from server.track_spline import (
     SplineRecorder, TrackSpline,
 )
 
-LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'iradar.log')
+def _app_dir() -> str:
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+LOG_FILE = os.path.join(_app_dir(), 'iradar.log')
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.INFO,
@@ -56,6 +61,9 @@ class RadarApp:
         self.recorder: SplineRecorder | None = None
         self._last_lap_pct: float = -1.0
         self._recording_lap: int = -1
+
+        self._logged_connect = False
+        self._diag_counter = 0
 
         # if mock, generate spline immediately
         if mock:
@@ -109,7 +117,6 @@ class RadarApp:
             self.window.radar.set_blips([])
 
     def _tick_inner(self):
-        # 1. read telemetry
         snap = self.source.tick()
 
         if snap is None or not snap.connected:
@@ -120,7 +127,32 @@ class RadarApp:
         self.window.radar.connected = True
         self.window.radar.track_name = snap.track_name
 
-        # 2. ensure we have a track spline
+        # log connection once
+        if not self._logged_connect:
+            log.info('Connected! track=%s config=%s track_len=%.0fm '
+                     'player_idx=%d lat=%.6f lon=%.6f',
+                     snap.track_name, snap.track_config, snap.track_length,
+                     snap.player_car_idx, snap.player_lat, snap.player_lon)
+            total_cars = len(snap.cars)
+            on_track = sum(1 for c in snap.cars if c.on_track and not c.on_pit_road)
+            log.info('Cars in session: total=%d on_track=%d', total_cars, on_track)
+            self._logged_connect = True
+
+        # periodic diagnostics (every 5 seconds)
+        self._diag_counter += 1
+        if self._diag_counter % (self.cfg.update_fps * 5) == 0:
+            on_track = sum(1 for c in snap.cars
+                           if c.on_track and not c.on_pit_road
+                           and c.car_idx != snap.player_car_idx)
+            log.info('DIAG lap=%d pct=%.4f lat=%.6f lon=%.6f yaw=%.3f '
+                     'cars_on_track=%d spline=%s blips=%d',
+                     snap.player_lap, snap.player_lap_dist_pct,
+                     snap.player_lat, snap.player_lon, snap.player_yaw,
+                     on_track,
+                     'ready' if self.spline else 'none',
+                     len(self.window.radar.blips))
+
+        # ensure we have a track spline
         if self.spline is None:
             self._handle_spline_acquisition(snap)
             self.window.radar.set_blips([])
@@ -129,7 +161,6 @@ class RadarApp:
         self.window.radar.spline_ready = True
         self.window.radar.recording_progress = -1
 
-        # 3. keep recording spline data for improving accuracy
         if self.recorder and not self.recorder.complete:
             self.recorder.feed(
                 snap.player_lap_dist_pct,
@@ -137,10 +168,7 @@ class RadarApp:
                 snap.player_lon,
             )
 
-        # 4. compute radar blips
         blips = compute_radar(snap, self.spline, self.cfg)
-
-        # 5. send to overlay
         self.window.radar.set_blips(blips)
 
     # ------------------------------------------------------------------
@@ -148,15 +176,20 @@ class RadarApp:
     # ------------------------------------------------------------------
 
     def _handle_spline_acquisition(self, snap):
-        # try loading from cache
+        from server.track_spline import spline_path
         cached = load_spline(self.cfg, snap.track_name, snap.track_config)
         if cached is not None:
             self.spline = cached
+            log.info('Loaded track spline: %s %s (%d points)',
+                     snap.track_name, snap.track_config, len(cached.pcts))
             print(f'  Loaded track spline: {snap.track_name} {snap.track_config}')
             return
 
-        # start recording
         if self.recorder is None:
+            sp = spline_path(self.cfg, snap.track_name, snap.track_config)
+            log.info('No cached spline at %s — starting recording. '
+                     'track=%s config=%s player_lap=%d',
+                     sp, snap.track_name, snap.track_config, snap.player_lap)
             print(f'  Recording track: {snap.track_name} {snap.track_config}')
             print('  Please drive one full lap...')
             self.recorder = SplineRecorder(
@@ -172,9 +205,11 @@ class RadarApp:
             snap.player_lon,
         )
 
-        # detect lap crossing
-        if snap.player_lap > self._recording_lap and self._recording_lap > 0:
+        # detect lap crossing (S/F line)
+        if snap.player_lap > self._recording_lap and self._recording_lap >= 0:
             self.recorder.mark_lap_complete()
+            log.info('Lap crossing detected: lap %d -> %d, samples=%d',
+                     self._recording_lap, snap.player_lap, self.recorder.sample_count)
 
         self._last_lap_pct = snap.player_lap_dist_pct
 
@@ -187,8 +222,10 @@ class RadarApp:
                 self.cfg, snap.track_name, snap.track_config,
             )
             if self.spline:
+                log.info('Track spline saved! %d points', self.recorder.sample_count)
                 print(f'  Track spline saved! ({self.recorder.sample_count} points)')
             else:
+                log.warning('Failed to build spline, restarting recording...')
                 print('  WARNING: failed to build spline, restarting recording...')
                 self.recorder = None
 

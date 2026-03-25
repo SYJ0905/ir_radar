@@ -6,8 +6,17 @@ from dataclasses import dataclass
 from typing import Tuple
 import json
 import os
+import sys
 
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config.json')
+
+def _app_dir() -> str:
+    """Return the directory where the exe (or main.py) lives."""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+
+
+CONFIG_FILE = os.path.join(_app_dir(), 'config.json')
 
 
 @dataclass
@@ -58,9 +67,7 @@ class RadarConfig:
 
     def __post_init__(self):
         if not self.spline_dir:
-            self.spline_dir = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), '..', 'track_data'
-            )
+            self.spline_dir = os.path.join(_app_dir(), 'track_data')
         # convert plain lists back to tuples after JSON deserialisation
         for attr in ('bg_colour', 'ring_colour', 'self_colour',
                      'car_colour_far', 'car_colour_near', 'car_colour_lapped'):
