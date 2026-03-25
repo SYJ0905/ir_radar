@@ -8,4 +8,5 @@ build/
 *.egg-info/
 config.json
 track_data/*.json
+iradar.log
 .DS_Store

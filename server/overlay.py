@@ -323,6 +323,25 @@ class OverlayWindow(QWidget):
         self.tray.hide()
         QApplication.instance().quit()
 
+    def ensure_on_top(self):
+        """Re-raise the window so it stays above iRacing (called periodically)."""
+        if self.isVisible():
+            self.raise_()
+            if sys.platform == 'win32':
+                try:
+                    import ctypes
+                    hwnd = int(self.winId())
+                    HWND_TOPMOST = -1
+                    SWP_NOMOVE = 0x0002
+                    SWP_NOSIZE = 0x0001
+                    SWP_NOACTIVATE = 0x0010
+                    ctypes.windll.user32.SetWindowPos(
+                        hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                    )
+                except Exception:
+                    pass
+
     # ------------------------------------------------------------------
     #  Drag to reposition (Alt + left click)
     # ------------------------------------------------------------------

@@ -11,7 +11,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import logging
+import os
 import sys
+import traceback
 
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import QApplication
@@ -23,6 +26,14 @@ from server.track_spline import (
     load_spline, create_mock_spline,
     SplineRecorder, TrackSpline,
 )
+
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'iradar.log')
+logging.basicConfig(
+    filename=LOG_FILE,
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+)
+log = logging.getLogger('iRadar')
 
 
 class RadarApp:
@@ -52,7 +63,7 @@ class RadarApp:
 
         # Qt app + overlay
         self.app = QApplication(sys.argv)
-        self.app.setQuitOnLastWindowClosed(True)
+        self.app.setQuitOnLastWindowClosed(False)
         self.window = OverlayWindow(cfg)
         self.window.show()
 
@@ -62,7 +73,15 @@ class RadarApp:
         self.timer.timeout.connect(self._tick)
         self.timer.start(interval_ms)
 
+        # periodically re-raise window to stay above iRacing
+        self._raise_timer = QTimer()
+        self._raise_timer.timeout.connect(self.window.ensure_on_top)
+        self._raise_timer.start(2000)
+
     def run(self) -> int:
+        mode = 'MOCK' if self.mock else 'LIVE'
+        log.info('iRadar started. Mode=%s  Size=%dpx  Range=%.0fm  FPS=%d',
+                 mode, self.cfg.radar_size, self.cfg.range_metres, self.cfg.update_fps)
         print('iRadar started.')
         if self.mock:
             print('  Mode: MOCK (simulated data)')
@@ -71,9 +90,10 @@ class RadarApp:
         print(f'  Radar size: {self.cfg.radar_size}px')
         print(f'  Range: {self.cfg.range_metres}m')
         print(f'  FPS: {self.cfg.update_fps}')
+        print(f'  Log file: {LOG_FILE}')
         print()
         print('  Alt+Click to drag the overlay.')
-        print('  Press Ctrl+C in this console to quit.')
+        print('  Right-click tray icon to quit.')
         return self.app.exec_()
 
     # ------------------------------------------------------------------
@@ -81,11 +101,16 @@ class RadarApp:
     # ------------------------------------------------------------------
 
     def _tick(self):
+        try:
+            self._tick_inner()
+        except Exception:
+            log.error('Tick error:\n%s', traceback.format_exc())
+            self.window.radar.connected = False
+            self.window.radar.set_blips([])
+
+    def _tick_inner(self):
         # 1. read telemetry
-        if self.mock:
-            snap = self.source.tick()
-        else:
-            snap = self.source.tick()
+        snap = self.source.tick()
 
         if snap is None or not snap.connected:
             self.window.radar.connected = False
@@ -189,8 +214,12 @@ def main():
     if args.fps is not None:
         cfg.update_fps = args.fps
 
-    app = RadarApp(cfg, mock=args.mock, num_opponents=args.num_opponents)
-    sys.exit(app.run())
+    try:
+        app = RadarApp(cfg, mock=args.mock, num_opponents=args.num_opponents)
+        sys.exit(app.run())
+    except Exception:
+        log.critical('Fatal error:\n%s', traceback.format_exc())
+        raise
 
 
 if __name__ == '__main__':
