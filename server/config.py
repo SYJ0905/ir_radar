@@ -59,10 +59,10 @@ class RadarConfig:
     car_visual_scale: float = 2.2    # multiplier for drawing only (not collision)
 
     # --- Smoothing ---
-    smooth_factor: float = 0.18     # lerp factor per frame (0=frozen, 1=instant)
+    smooth_factor: float = 0.5      # lerp factor per frame (higher = snappier)
 
     # --- Update ---
-    update_fps: int = 30
+    update_fps: int = 60
 
     def __post_init__(self):
         # convert plain lists back to tuples after JSON deserialisation
