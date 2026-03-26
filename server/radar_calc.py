@@ -54,7 +54,11 @@ def _assign_lateral(
     """Assign rx (lateral) positions using persistent per-car tracking.
 
     Phase 1 — Alongside cars that already have a persisted side keep it.
-    Phase 2 — New alongside cars get assigned based on the spotter.
+    Phase 2 — New alongside cars get assigned based on the spotter,
+              but strictly capped: at most 1 car per side (2 if
+              CLR = 2_CARS_LEFT / 2_CARS_RIGHT).  This prevents the
+              accumulation bug where every nearby car gradually got
+              assigned the same side across multiple frames.
     Phase 3 — Cars outside the alongside zone have their offset decayed
               smoothly toward zero so the transition looks natural.
     """
@@ -71,7 +75,7 @@ def _assign_lateral(
     )
     alongside_ids = {b.car_idx for b in alongside}
 
-    # Phase 1: keep existing assignments
+    # Phase 1: keep existing assignments for alongside cars
     unassigned: List[RadarBlip] = []
     for b in alongside:
         if b.car_idx in state.car_sides:
@@ -80,39 +84,45 @@ def _assign_lateral(
             unassigned.append(b)
 
     # Phase 2: assign new alongside cars from spotter.
-    # Only the closest unassigned car(s) get the lateral offset;
-    # the spotter signal refers to the nearest car, not all of them.
-    max_new = 2 if (has_left and has_right) else 1
-    assigned_new = 0
+    # Hard cap per side — spotter "car RIGHT" = ONE car alongside.
+    max_left = 0
+    max_right = 0
+    if has_left:
+        max_left = 2 if snap.car_left_right == LR_2_CARS_LEFT else 1
+    if has_right:
+        max_right = 2 if snap.car_left_right == LR_2_CARS_RIGHT else 1
+
+    n_left = sum(1 for b in alongside
+                 if b.car_idx in state.car_sides
+                 and state.car_sides[b.car_idx] < -1.0)
+    n_right = sum(1 for b in alongside
+                  if b.car_idx in state.car_sides
+                  and state.car_sides[b.car_idx] > 1.0)
 
     for b in unassigned:
-        if assigned_new >= max_new or (not has_left and not has_right):
-            b.rx = 0.0
-            continue
+        side = 0.0
 
-        if has_left and not has_right:
-            b.rx = -cfg.lateral_estimate
-        elif has_right and not has_left:
-            b.rx = cfg.lateral_estimate
+        if has_left and not has_right and n_left < max_left:
+            side = -cfg.lateral_estimate
+        elif has_right and not has_left and n_right < max_right:
+            side = cfg.lateral_estimate
         elif has_left and has_right:
-            left_taken = any(
-                state.car_sides.get(c, 0) < -1.0
-                for c in alongside_ids if c != b.car_idx
-            )
-            right_taken = any(
-                state.car_sides.get(c, 0) > 1.0
-                for c in alongside_ids if c != b.car_idx
-            )
-            if left_taken and not right_taken:
-                b.rx = cfg.lateral_estimate
-            elif right_taken and not left_taken:
-                b.rx = -cfg.lateral_estimate
-            else:
-                b.rx = -cfg.lateral_estimate
+            if n_left < max_left and n_right >= max_right:
+                side = -cfg.lateral_estimate
+            elif n_right < max_right and n_left >= max_left:
+                side = cfg.lateral_estimate
+            elif n_left < max_left and n_right < max_right:
+                side = -cfg.lateral_estimate if n_left <= n_right else cfg.lateral_estimate
 
-        if abs(b.rx) > 0.1:
-            state.car_sides[b.car_idx] = b.rx
-            assigned_new += 1
+        if abs(side) > 0.1:
+            b.rx = side
+            state.car_sides[b.car_idx] = side
+            if side < 0:
+                n_left += 1
+            else:
+                n_right += 1
+        else:
+            b.rx = 0.0
 
     # Phase 3: non-alongside cars — decay lateral offset toward zero
     for b in blips:
